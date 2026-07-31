@@ -1,10 +1,13 @@
 FROM ubuntu:22.04
 
+# Link docker package to the source repo
+LABEL org.opencontainers.image.source=https://github.com/EkoDevices/coral-fw
+
+
 # Install tools
 RUN apt-get update && apt-get upgrade -y
 
-
-RUN apt install -y \
+RUN apt-get update && apt install -y \
     make \
     git \
     cmake \
@@ -18,7 +21,8 @@ RUN apt install -y \
     libgl1-mesa-dev \
     sudo \
     python3-pip \
-    udev
+    udev \
+    zip
 
 RUN pip install black
 RUN pip install pyserial
@@ -43,16 +47,19 @@ ARG MTB_TOOLS_PACKAGE_VERSION
 ARG MTB_GCC_VERSION
 ARG MTB_EDGE_PROTECT_SEC_SUITE_VERSION
 ARG MTB_PROGTOOLS_VERSION
+ARG MTB_MULTISENSE_VERSION
 
 ENV MTB_TOOLS_PACKAGE=modustoolbox_${MTB_TOOLS_PACKAGE_VERSION}_Linux_x64.deb
 ENV MTB_GCC_PACKAGE=mtbgccpackage_${MTB_GCC_VERSION}_Linux_x64.deb
 ENV MTB_EDGE_PROTECT_SEC_SUITE_PACKAGE=modustoolboxedgeprotectsecuritysuite_${MTB_EDGE_PROTECT_SEC_SUITE_VERSION}_Linux_x64.deb
 ENV MTB_PROGTOOLS_PACKAGE=ModusToolboxProgtools_${MTB_PROGTOOLS_VERSION}.deb
+ENV MTB_MULTISENSE_PACKAGE=modustoolboxpackmultisense_${MTB_MULTISENSE_VERSION}_Linux_x64.deb
 
 # Environment variables
 ENV HOME=/home
 ENV MTB_TOOLS_DIR=/opt/Tools/ModusToolbox/tools_${MTB_VERSION}
 ENV MTB_PROGTOOLS_DIR=/opt/Tools/ModusToolboxProgtools-${MTB_PROGTOOLS_VERSION%.*.*}
+ENV MTB_MULTISENSE_DIR=/opt/Tools/ModusToolbox-Multi-Sense-Pack
 ENV MTB_GCC_DIR=/opt/Tools/mtb-gcc-arm-eabi/14.2.1
 
 # ModusToolbox is located locally in the repository during build
@@ -61,6 +68,7 @@ COPY ${MTB_TOOLS_PACKAGE} ${HOME}
 COPY ${MTB_GCC_PACKAGE} ${HOME}
 COPY ${MTB_EDGE_PROTECT_SEC_SUITE_PACKAGE} ${HOME}
 COPY ${MTB_PROGTOOLS_PACKAGE} ${HOME}
+COPY ${MTB_MULTISENSE_PACKAGE} ${HOME}
 
 # Run all installation scripts for ModusToolbox toolchain
 RUN cd ${HOME} && apt -y install ./${MTB_TOOLS_PACKAGE}
@@ -71,8 +79,10 @@ RUN cd ${MTB_TOOLS_DIR}/modus-shell \
 RUN cd ${HOME} && apt -y install ./${MTB_GCC_PACKAGE}
 RUN cd ${HOME} && apt -y install ./${MTB_EDGE_PROTECT_SEC_SUITE_PACKAGE}
 RUN cd ${HOME} && apt -y install ./${MTB_PROGTOOLS_PACKAGE}
+RUN cd ${HOME} && apt -y install ./${MTB_MULTISENSE_PACKAGE}
 
-RUN cd ${MTB_PROGTOOLS_DIR}/openocd/udev_rules \
+RUN ln -sf /bin/true /usr/bin/udevadm \
+    && cd ${MTB_PROGTOOLS_DIR}/openocd/udev_rules \
     && sh install_rules.sh 
 
 # Add MTB gcc and project-creator tool to path
