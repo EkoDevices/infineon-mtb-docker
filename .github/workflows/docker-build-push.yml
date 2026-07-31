@@ -1,0 +1,166 @@
+name: Build & Push MTB Docker Image
+
+# Builds the ModusToolbox Docker image and pushes it to GHCR.
+#
+# The Dockerfile needs the ModusToolbox Linux tarball in its build context,
+# but that file is gated behind Infineon's license click-through page, so it
+# can't be curled directly in CI. This workflow instead pulls it from a
+# private GitHub Release in THIS repo (upload it once via
+# `gh release create <tag> ModusToolbox_<version>-linux-install.tar.gz
+#   --title "MTB tools tarball" --notes "..."`),
+# using the built-in GITHUB_TOKEN to authenticate the download.
+
+on:
+  push:
+    branches: [ coral/build-docker ]
+    paths:
+      - 'Dockerfile-mtb30'
+      - 'Dockerfile-mtb36'
+      - '.github/workflows/docker-build-push.yml'
+  workflow_dispatch:
+    inputs:
+      dockerfile:
+        description: "Which Dockerfile to build"
+        required: false
+        default: "Dockerfile-mtb30"
+        type: choice
+        options: [ Dockerfile-mtb30, Dockerfile-mtb36 ]
+      mtb_tools_package_version:
+        description: "MTB_TOOLS_PACKAGE_VERSION build-arg (e.g. 3.0.0.9369)"
+        required: false
+      mtb_tools_version:
+        description: "MTB_TOOLS_VERSION build-arg (e.g. 3.0)"
+        required: false
+      mtb_gcc_version:
+        description: "MTB_GCC_VERSION build-arg (e.g. 14.2.1.265)"
+        required: false
+      mtb_edge_protect_sec_suite_version:
+        description: "MTB_EDGE_PROTECT_SEC_SUITE_VERSION build-arg (e.g. 2.0.0.900)"
+        required: false
+      mtb_progtools_version:
+        description: "MTB_PROGTOOLS_VERSION build-arg (e.g. 1.9.0.2261)"
+        required: false
+      mtb_multisense_version:
+        description: "MTB_MULTISENSE_VERSION build-arg (e.g. 1.5.0.730)"
+        required: false
+      tarball_release_tag:
+        description: "Tag of the GitHub Release holding the tarball asset"
+        required: false
+        default: "mtb-tarball"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKERFILE: ${{ github.event.inputs.dockerfile || vars.MTB_DOCKERFILE || 'Dockerfile-mtb36' }}
+  MTB_TOOLS_PACKAGE_VERSION: ${{ github.event.inputs.mtb_tools_package_version || vars.MTB_TOOLS_PACKAGE_VERSION || '3.8.0.18384' }}
+  MTB_TOOLS_VERSION: ${{ github.event.inputs.mtb_tools_version || vars.MTB_TOOLS_VERSION || '3.8' }}
+  MTB_GCC_VERSION: ${{ github.event.inputs.mtb_gcc_version || vars.MTB_GCC_VERSION || '14.2.1.265' }}
+  MTB_EDGE_PROTECT_SEC_SUITE_VERSION: ${{ github.event.inputs.mtb_edge_protect_sec_suite_version || vars.MTB_EDGE_PROTECT_SEC_SUITE_VERSION || '2.0.0.900' }}
+  MTB_PROGTOOLS_VERSION: ${{ github.event.inputs.mtb_progtools_version || vars.MTB_PROGTOOLS_VERSION || '1.9.0.2261' }}
+  MTB_MULTISENSE_VERSION: ${{ github.event.inputs.mtb_multisense_version || vars.MTB_MULTISENSE_VERSION || '1.5.0.730' }}
+  TARBALL_RELEASE_TAG: ${{ github.event.inputs.tarball_release_tag || vars.MTB_TARBALL_RELEASE_TAG || 'mtb-coral' }}
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/mpy-mtb-coral
+
+permissions:
+  contents: read   # needed to download the release asset via gh CLI
+  packages: write  # needed to push to GHCR
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # Pull the license-gated MTB tarball from a private Release in this
+      # repo (uploaded there ahead of time — see the header comment above).
+      - name: Download MTB tarball from private release for MTB 3.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: env.DOCKERFILE == 'Dockerfile-mtb30'
+        run: |
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "ModusToolbox_*-linux-install.tar.gz" \
+            --dir .
+          ls -lh ModusToolbox_*-linux-install.tar.gz
+
+      - name: Download MTB tarball from private release for MTB 3.6
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: env.DOCKERFILE == 'Dockerfile-mtb36'
+        run: |
+          echo "Github Repo: $GITHUB_REPOSITORY"
+          echo "Tarball Release Tag: $TARBALL_RELEASE_TAG"
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "modustoolbox_*_Linux_x64.deb" \
+            --dir .
+          ls -lh modustoolbox_*_Linux_x64.deb
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "modustoolboxedgeprotectsecuritysuite_*_Linux_x64.deb" \
+            --dir .
+          ls -lh modustoolboxedgeprotectsecuritysuite_*_Linux_x64.deb
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "ModusToolboxProgtools_*.deb" \
+            --dir .
+          ls -lh ModusToolboxProgtools_*.deb
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "modustoolboxpackmultisense_*.deb" \
+            --dir .
+          ls -lh modustoolboxpackmultisense_*.deb
+          gh release download "$TARBALL_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "mtbgccpackage_*_Linux_x64.deb" \
+            --dir .
+          ls -lh mtbgccpackage_*_Linux_x64.deb
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.MTB_TOOLS_VERSION }}
+            type=raw,value=latest
+            type=sha,format=short
+
+      # ubuntu-latest runners are natively linux/amd64, so no QEMU/emulation
+      # step is needed here (unlike building this locally on Apple Silicon).
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./${{ env.DOCKERFILE }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=ModusToolbox build environment (${{ env.DOCKERFILE }})
+          build-args: |
+            MTB_PACKAGE_VERSION=${{ env.MTB_TOOLS_PACKAGE_VERSION }}
+            MTB_VERSION=${{ env.MTB_TOOLS_VERSION }}
+            MTB_TOOLS_PACKAGE_VERSION=${{ env.MTB_TOOLS_PACKAGE_VERSION }}
+            MTB_GCC_VERSION=${{ env.MTB_GCC_VERSION }}
+            MTB_EDGE_PROTECT_SEC_SUITE_VERSION=${{ env.MTB_EDGE_PROTECT_SEC_SUITE_VERSION }}
+            MTB_PROGTOOLS_VERSION=${{ env.MTB_PROGTOOLS_VERSION }}
+            MTB_MULTISENSE_VERSION=${{ env.MTB_MULTISENSE_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

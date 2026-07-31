@@ -4,6 +4,10 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive  
 ENV UDEV=1
 
+# Link docker package to the source repo
+LABEL org.opencontainers.image.source=https://github.com/EkoDevices/coral-fw
+
+
 # Install tools
 RUN apt-get update && apt-get upgrade -y
 
